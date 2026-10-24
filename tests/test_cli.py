@@ -64,3 +64,16 @@ def test_pending_hides_expired_tickets(tmp_path, capsys):
     store.save(t.model_copy(update={"expires_at": t.created_at}))
     assert main(["--data-dir", str(tmp_path), "pending"]) == 0
     assert res.ticket_id not in capsys.readouterr().out
+
+
+def test_respond_reports_already_executed_for_duplicate_request(tmp_path, capsys):
+    from hitl_agent.cli import build_agent
+    from hitl_agent.llm import FakeLLMClient
+    from hitl_agent.models import RefundRequest
+    build_agent(tmp_path, FakeLLMClient(['{"verdict": "approve", "confidence": 0.95}'])).submit(
+        RefundRequest(request_id="r1", requester="carol", customer_id="c1", amount=10, reason="x"))
+    res = _pause_one(tmp_path)
+    capsys.readouterr()
+    rc = main(["--data-dir", str(tmp_path), "respond", res.ticket_id, "--reviewer", "bob",
+               "--decision", "approve", "--justification", "Verified with customer.", "--answer", "q?=yes"])
+    assert rc == 0 and capsys.readouterr().out.strip() == f"{res.ticket_id}: ALREADY_EXECUTED"

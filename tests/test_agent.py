@@ -141,20 +141,22 @@ def test_high_value_request_needs_human_despite_confidence(make_agent, req):
     assert agent.resume(res.ticket_id, approve("alice", answers={})).outcome is Outcome.EXECUTED
 
 
-def test_duplicate_request_id_reports_the_amount_actually_paid(make_agent, req):
+def test_duplicate_request_id_auto_path_reports_already_executed(make_agent, req):
     agent = make_agent([reply()])
     agent.submit(req(amount=40))
     res = agent.submit(req(amount=90))
-    assert res.outcome is Outcome.EXECUTED and res.amount == 40
+    assert res.outcome is Outcome.ALREADY_EXECUTED and res.amount is None
     assert agent.executor.entries()["r1"]["amount"] == 40
     events = [r for r in agent.audit.read() if r["event"] in ("executed", "already_executed")]
     assert [(r["event"], r["data"]["amount"]) for r in events] == [("executed", 40), ("already_executed", 40)]
 
 
-def test_human_approved_duplicate_records_the_ledger_amount(make_agent, req):
+def test_duplicate_request_id_human_path_reports_already_executed(make_agent, req):
     agent = make_agent([reply()])
     agent.submit(req(amount=40))
     second, res = paused(make_agent, lambda: req(amount=45))
     out = second.resume(res.ticket_id, approve())
-    assert out.amount == 40 and second.store.load(res.ticket_id).final_amount == 40
+    assert out.outcome is Outcome.ALREADY_EXECUTED and out.amount is None
+    t = second.store.load(res.ticket_id)
+    assert t.outcome is Outcome.ALREADY_EXECUTED and t.final_amount is None
     assert second.audit.read()[-1]["event"] == "already_executed"

@@ -130,21 +130,21 @@ class ApprovalAgent:
             return "open_ticket"
         return "auto_deny" if state["assessment"]["verdict"] == Verdict.DENY.value else "auto_execute"
 
-    def _pay(self, req: RefundRequest, amount: float, details: dict) -> float:
-        """Execute and audit what the ledger actually holds; returns the amount paid."""
+    def _pay(self, req: RefundRequest, amount: float, details: dict) -> tuple[Outcome, float | None]:
+        """Execute and audit what the ledger actually holds; returns the outcome and the amount paid now."""
         entry, paid_now = self.executor.execute(req, amount)
         if paid_now:
             self.audit.append("executed", req.request_id, AGENT,
                               {"ref": entry["ref"], "amount": entry["amount"], **details})
-        else:
-            self.audit.append("already_executed", req.request_id, AGENT,
-                              {"ref": entry["ref"], "amount": entry["amount"], "requested_amount": amount, **details})
-        return entry["amount"]
+            return Outcome.EXECUTED, entry["amount"]
+        self.audit.append("already_executed", req.request_id, AGENT,
+                          {"ref": entry["ref"], "amount": entry["amount"], "requested_amount": amount, **details})
+        return Outcome.ALREADY_EXECUTED, None
 
     def _auto_execute(self, state: AgentState) -> dict:
         req = self._req(state)
-        paid = self._pay(req, req.amount, {"mode": "autonomous"})
-        return {"outcome": Outcome.EXECUTED.value, "amount": paid}
+        outcome, paid = self._pay(req, req.amount, {"mode": "autonomous"})
+        return {"outcome": outcome.value, "amount": paid}
 
     def _auto_deny(self, state: AgentState) -> dict:
         req = self._req(state)
@@ -228,9 +228,9 @@ class ApprovalAgent:
         amount = effective_amount(ticket, resp)
         # Resume with validated context merged into the request the executor sees.
         request = ticket.request.model_copy(update={"context": {**ticket.request.context, **resp.answers}})
-        paid = self._pay(request, amount, {"mode": "human_approved", "approver": resp.reviewer})
-        self._resolve(state, Outcome.EXECUTED, paid)
-        return {"outcome": Outcome.EXECUTED.value, "amount": paid}
+        outcome, paid = self._pay(request, amount, {"mode": "human_approved", "approver": resp.reviewer})
+        self._resolve(state, outcome, paid)
+        return {"outcome": outcome.value, "amount": paid}
 
     def _build(self) -> StateGraph:
         g = StateGraph(AgentState)

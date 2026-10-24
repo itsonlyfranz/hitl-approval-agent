@@ -81,6 +81,7 @@ class HumanResponse(BaseModel):
 
 class Outcome(str, Enum):
     EXECUTED = "executed"
+    ALREADY_EXECUTED = "already_executed"  # ledger already held this request_id; nothing paid
     REJECTED = "rejected"
     DENIED = "denied"
     EXPIRED = "expired"
