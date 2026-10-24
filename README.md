@@ -4,22 +4,24 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 
 > Project 6 of my AI-engineering portfolio. **Shows: you can build safe, compliant systems.**
 
-**Technologies:** Python 3.11+, Pydantic v2, Anthropic Claude SDK, pytest
+**Technologies:** Python 3.11+, LangGraph, langchain-anthropic (Claude), Pydantic v2, SQLite checkpointing, pytest
 
 ## Highlights
 
+- Built as a **LangGraph `StateGraph`** with typed state, 10 explicit nodes and conditional edges; the pause is a native LangGraph `interrupt`, checkpointed to SQLite and resumed with `Command(resume=...)`.
 - Six distinct uncertainty signals (low confidence, missing info, inconsistent samples, unparseable output, LLM error, high-value policy) gate every action; the agent fails closed.
 - Pause/resume through durable, atomically written JSON tickets: no side effect happens while a request waits, and a pending ticket survives a process restart.
 - Human input is validated before resume: authorised reviewer, separation of duties, every question answered, bounded amount edits, per-reviewer approval limits.
 - SHA-256 hash-chained audit log: the offline demo writes 15 verified records across 3 requests, and tests confirm edits, deletions and reordering are detected.
-- The LLM sits behind a one-method interface; the 50-test suite runs offline with a fake client and an injected clock.
+- Self-consistency sampling runs as parallel graph branches (`Send` fan-out); a recursion limit caps graph steps per invocation.
+- The LLM sits behind a one-method interface; the 57-test suite runs offline with a fake client and an injected clock.
 
 ## What it demonstrates
 
 | Capability | Where | Proved by |
 |---|---|---|
-| **Uncertainty detection** | `uncertainty.py` | `tests/test_uncertainty.py` |
-| **Pause** - durable checkpoint, nothing executes while waiting; survives restarts and expires | `agent.py`, `store.py` | `test_uncertain_request_pauses...`, `test_pause_survives_process_restart`, `test_expired_ticket_is_not_executed` |
+| **Uncertainty detection** | `uncertainty.py` | `tests/test_uncertainty.py`, `tests/test_graph.py` (parallel samples) |
+| **Pause** - durable checkpoint, nothing executes while waiting; survives restarts and expires | `agent.py`, `store.py` | `test_uncertain_request_pauses...`, `test_pause_survives_process_restart`, `test_pause_is_a_langgraph_interrupt...`, `test_expired_ticket_is_not_executed` |
 | **Request human input** - ticket carries the signals and the exact questions | `models.Ticket` | `test_uncertain_request_pauses...` |
 | **Resume with validated context** | `validation.py` | `test_invalid_response_refused...`, `test_reviewer_approval_limit_enforced`, `test_modify_*` |
 | **Full audit trail** | `audit.py` | `tests/test_audit.py` |
@@ -27,25 +29,21 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 ## Architecture
 
 ```
-RefundRequest ─► LLM assess (JSON: verdict, confidence, missing_info)
-                     │
-              uncertainty.detect ── no signals ──► execute / deny autonomously ─┐
-                     │ signals                                                  │
-                     ▼                                                          │
-              Ticket (JSON file) ── status: PENDING ── human sees questions      │
-                     │                                                          │
-              HumanResponse ─► validation ── refused ─► ticket stays PENDING ───┤
-                     │ valid                                                    │
-                     ▼                                                          ▼
-         approve / modify / reject ──► Executor (idempotent ledger) ──► audit.jsonl (hash chain)
+START ─► intake ─► sample x N (parallel branches) ─► evaluate ─┬─► auto_execute / auto_deny ─► END
+                                                               └─► open_ticket ─► human_review  (interrupt: run checkpointed)
+                                                                        ▲                │ resume(Command)
+                                                                        └── invalid ◄─ validate ─┬─► execute ─► END
+                                                                                                 ├─► reject  ─► END
+                                                                                                 └─► expired ─► END
+every node writes to audit.jsonl (hash chain)
 ```
 
 Components:
 
-- **`llm.py`** - `LLMClient` interface with `AnthropicClient` (real) and `FakeLLMClient` (offline tests).
+- **`llm.py`** - `LLMClient` interface with `AnthropicClient` (`langchain-anthropic` `ChatAnthropic`) and `FakeLLMClient` (offline tests).
 - **`uncertainty.py`** - prompts the model, parses its JSON assessment, and turns results and failures into pause signals.
-- **`agent.py`** - `ApprovalAgent` orchestrating submit (decide or pause) and resume (validate, execute).
-- **`store.py`** - local-file ticket checkpoints written atomically.
+- **`agent.py`** - the LangGraph `StateGraph`: typed `AgentState`, nodes, conditional edges, `interrupt`, SQLite checkpointer; `ApprovalAgent.submit/resume` wrap it.
+- **`store.py`** - local-file ticket index (what a reviewer queue shows) written atomically; the graph checkpoint holds the run state.
 - **`validation.py`** - authority, separation-of-duties, completeness and amount checks on human responses.
 - **`executor.py`** - idempotent ledger standing in for the side-effecting payments call.
 - **`audit.py`** - append-only hash-chained JSONL log with verification.
@@ -80,8 +78,10 @@ Configuration: `ANTHROPIC_API_KEY`, `HITL_MODEL` (default `claude-sonnet-5-5`), 
 - **Policy beats confidence.** Amounts at or above the limit always go to a human; the model's confidence cannot waive that.
 - **Self-reported confidence is a weak signal**, so it is combined with missing-info questions, optional multi-sample consistency (`Policy.samples`), and deterministic rules. LLM confidence is not calibrated; the deterministic rules are the real guarantee.
 - **Rejected responses don't consume the ticket.** A bad answer is audited and the reviewer can retry; only an accepted answer resolves it. A ticket resolves exactly once, so double-submission cannot pay twice (the executor is also idempotent per request).
+- **LangGraph where it fits, not everywhere.** Interrupts + a durable checkpointer give pause/resume for free; `Send` gives parallel sampling; conditional edges make routing explicit and testable. Graph state holds plain dicts (not Pydantic objects) so checkpoints stay portable across versions, and the `human_review` node is side-effect free because LangGraph re-runs an interrupted node on resume.
+- **Two stores.** The graph checkpoint owns run state; the ticket file is the reviewer-facing index (pending list, expiry, final outcome). Cheaper than scanning checkpoints, at the cost of keeping them in step.
 - **Resume does not re-ask the model.** The human's validated decision is authoritative and deterministic; answers are merged into the request context handed to the executor and recorded in the audit log.
-- **Local files, no services.** Tickets are atomic JSON files; the audit log is JSONL. Single-writer by design — a real deployment would swap in a database with row locks and append-only storage.
+- **Local files, no services.** Tickets are atomic JSON files, graph checkpoints a local SQLite file; the audit log is JSONL. Single-writer by design — a real deployment would swap in a database with row locks and append-only storage.
 - **Tamper-*evident*, not tamper-*proof*.** The hash chain detects modification, deletion and reordering, but someone with write access can rewrite the whole chain or truncate the tail; anchoring the head hash externally would close that gap.
 - **Reviewer identity is a registry in code** (`REVIEWERS` in `cli.py`); authentication is out of scope.
 

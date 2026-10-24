@@ -14,23 +14,21 @@ class LLMClient(Protocol):
 
 
 class AnthropicClient:
-    """Thin wrapper over the official SDK; the only place the network is touched."""
+    """Claude via langchain-anthropic; the only place the network is touched."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None, max_tokens: int = 600):
-        import anthropic  # imported lazily so offline use never needs a key
+        from langchain_anthropic import ChatAnthropic  # lazy: offline use never needs a key
 
         self.model = model or os.environ.get("HITL_MODEL", DEFAULT_MODEL)
-        self.max_tokens = max_tokens
-        self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        kwargs = {"api_key": api_key} if api_key else {}
+        self._chat = ChatAnthropic(model=self.model, max_tokens=max_tokens, **kwargs)
 
     def complete(self, system: str, prompt: str) -> str:
-        msg = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        msg = self._chat.invoke([("system", system), ("human", prompt)])
+        content = msg.content
+        if isinstance(content, str):
+            return content
+        return "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
 
 
 class FakeLLMClient:

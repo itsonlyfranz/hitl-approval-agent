@@ -52,29 +52,41 @@ def parse_assessment(text: str) -> Assessment:
         raise ValueError(f"invalid assessment: {e}") from e
 
 
+def run_sample(llm: LLMClient, req: RefundRequest) -> Assessment | UncertaintySignal:
+    """One model call. Failures come back as signals so the caller fails closed."""
+    try:
+        raw = llm.complete(SYSTEM_PROMPT, build_prompt(req))
+    except Exception as e:  # provider outage, timeout, auth...
+        return UncertaintySignal(kind=SignalKind.LLM_ERROR, detail=f"{type(e).__name__}: {e}")
+    try:
+        return parse_assessment(raw)
+    except ValueError as e:
+        return UncertaintySignal(kind=SignalKind.UNPARSEABLE, detail=str(e))
+
+
+def evaluate(
+    req: RefundRequest, results: list[Assessment | UncertaintySignal], policy: Policy
+) -> tuple[Assessment | None, list[UncertaintySignal]]:
+    """Combine sample results into a primary assessment plus any uncertainty signals."""
+    samples = [r for r in results if isinstance(r, Assessment)]
+    failures = [r for r in results if isinstance(r, UncertaintySignal)]
+    primary = samples[0] if samples else None
+    if primary is not None and not failures:
+        return primary, detect(req, primary, policy, samples)
+    # Model failed: still apply the policy rules that don't depend on it.
+    return primary, failures + _policy_signals(req, policy)
+
+
 def assess(
     llm: LLMClient, req: RefundRequest, policy: Policy
 ) -> tuple[Assessment | None, list[UncertaintySignal]]:
-    """Query the model and return its (primary) assessment plus any uncertainty signals."""
-    signals: list[UncertaintySignal] = []
-    samples: list[Assessment] = []
+    """Sequential convenience wrapper (the graph runs the samples as parallel branches)."""
+    results: list[Assessment | UncertaintySignal] = []
     for _ in range(max(1, policy.samples)):
-        try:
-            raw = llm.complete(SYSTEM_PROMPT, build_prompt(req))
-        except Exception as e:  # provider outage, timeout, auth...
-            signals.append(UncertaintySignal(kind=SignalKind.LLM_ERROR, detail=f"{type(e).__name__}: {e}"))
+        results.append(run_sample(llm, req))
+        if isinstance(results[-1], UncertaintySignal):
             break
-        try:
-            samples.append(parse_assessment(raw))
-        except ValueError as e:
-            signals.append(UncertaintySignal(kind=SignalKind.UNPARSEABLE, detail=str(e)))
-            break
-
-    primary = samples[0] if samples else None
-    if primary is not None and not signals:
-        return primary, detect(req, primary, policy, samples)
-    # Model failed: still apply the policy rules that don't depend on it.
-    return primary, signals + _policy_signals(req, policy)
+    return evaluate(req, results, policy)
 
 
 def _policy_signals(req: RefundRequest, policy: Policy) -> list[UncertaintySignal]:

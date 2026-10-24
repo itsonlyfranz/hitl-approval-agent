@@ -28,6 +28,7 @@ def build_agent(data_dir: Path, llm: LLMClient) -> ApprovalAgent:
         executor=LedgerExecutor(data_dir / "ledger.json"),
         reviewers=REVIEWERS,
         policy=Policy(),
+        checkpoint_path=data_dir / "checkpoints.sqlite",
     )
 
 
@@ -50,7 +51,7 @@ def _scripted_llm() -> FakeLLMClient:
 def _print_result(label: str, res) -> None:
     state = f"PAUSED ticket={res.ticket_id}" if res.paused else f"{res.outcome.value.upper()}"
     print(f"{label}: {state}")
-    for s in res.signals:
+    for s in res.signals if res.paused else []:
         print(f"    signal {s.kind.value}: {s.detail}")
     for q in res.questions:
         print(f"    question: {q}")

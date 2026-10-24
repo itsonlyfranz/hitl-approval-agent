@@ -43,6 +43,7 @@ def make_agent(tmp_path, clock):
             executor=LedgerExecutor(tmp_path / "ledger.json"),
             reviewers=[Reviewer("alice", 5000), Reviewer("bob", 500)],
             policy=policy or Policy(), clock=clock,
+            checkpoint_path=tmp_path / "checkpoints.sqlite",
         )
         agent.llm_fake = llm
         return agent

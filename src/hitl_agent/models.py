@@ -90,6 +90,7 @@ class Ticket(BaseModel):
     """Durable checkpoint: everything needed to resume after a pause."""
 
     ticket_id: str
+    thread_id: str = ""  # LangGraph thread holding the paused run
     request: RefundRequest
     assessment: Assessment | None
     signals: list[UncertaintySignal]
