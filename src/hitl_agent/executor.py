@@ -10,7 +10,9 @@ from hitl_agent.models import RefundRequest
 
 
 class Executor(Protocol):
-    def execute(self, request: RefundRequest, amount: float) -> str: ...
+    def execute(self, request: RefundRequest, amount: float) -> tuple[dict, bool]:
+        """Return the ledger entry for the request and whether this call created it."""
+        ...
 
 
 class LedgerExecutor:
@@ -23,15 +25,15 @@ class LedgerExecutor:
     def entries(self) -> dict[str, dict]:
         return json.loads(self.path.read_text()) if self.path.exists() else {}
 
-    def execute(self, request: RefundRequest, amount: float) -> str:
+    def execute(self, request: RefundRequest, amount: float) -> tuple[dict, bool]:
         entries = self.entries()
-        ref = f"refund-{request.request_id}"
-        if request.request_id not in entries:  # idempotent: never pay twice
-            entries[request.request_id] = {
-                "ref": ref,
-                "customer_id": request.customer_id,
-                "amount": amount,
-                "currency": request.currency,
-            }
-            self.path.write_text(json.dumps(entries, indent=2))
-        return ref
+        if request.request_id in entries:  # idempotent: never pay twice
+            return entries[request.request_id], False
+        entry = entries[request.request_id] = {
+            "ref": f"refund-{request.request_id}",
+            "customer_id": request.customer_id,
+            "amount": amount,
+            "currency": request.currency,
+        }
+        self.path.write_text(json.dumps(entries, indent=2))
+        return entry, True

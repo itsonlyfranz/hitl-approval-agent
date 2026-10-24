@@ -26,10 +26,6 @@ class AuditLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def _last_hash(self) -> str:
-        records = self.read()
-        return records[-1]["hash"] if records else GENESIS
-
     def append(self, event: str, request_id: str, actor: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         records = self.read()
         body = {

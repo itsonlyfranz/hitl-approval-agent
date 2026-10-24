@@ -6,14 +6,15 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-from hitl_agent.agent import ApprovalAgent
+from hitl_agent.agent import ApprovalAgent, TicketNotPending
 from hitl_agent.audit import AuditLog
 from hitl_agent.executor import LedgerExecutor
 from hitl_agent.llm import AnthropicClient, FakeLLMClient, LLMClient, load_env
 from hitl_agent.models import Decision, HumanResponse, RefundRequest, TicketStatus
-from hitl_agent.store import TicketStore
+from hitl_agent.store import TicketNotFound, TicketStore
 from hitl_agent.uncertainty import Policy
 from hitl_agent.validation import Reviewer, ResponseRejected
 
@@ -116,7 +117,10 @@ def cmd_submit(args) -> int:
 
 
 def cmd_pending(args) -> int:
+    now = datetime.now(timezone.utc)
     for t in TicketStore(Path(args.data_dir) / "tickets").list(TicketStatus.PENDING):
+        if t.expires_at <= now:
+            continue
         print(f"{t.ticket_id}  {t.request.request_id}  {t.request.amount:.2f} {t.request.currency}  "
               f"expires {t.expires_at:%Y-%m-%d %H:%M}Z")
         for q in t.questions:
@@ -133,6 +137,12 @@ def cmd_respond(args) -> int:
         _print_result(args.ticket_id, agent.resume(args.ticket_id, resp))
     except ResponseRejected as e:
         print("response refused:", *e.errors, sep="\n  ")
+        return 1
+    except TicketNotFound as e:
+        print(f"response refused: unknown ticket {e.args[0]}")
+        return 1
+    except TicketNotPending as e:
+        print(f"response refused: {e}")
         return 1
     return 0
 
