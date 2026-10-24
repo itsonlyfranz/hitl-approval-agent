@@ -14,7 +14,7 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 - Human input is validated before resume: authorised reviewer, separation of duties, every question answered, bounded amount edits, per-reviewer approval limits.
 - SHA-256 hash-chained audit log: the offline demo writes 15 verified records across 3 requests, and tests confirm edits, deletions and reordering are detected.
 - Self-consistency sampling runs as parallel graph branches (`Send` fan-out); a recursion limit caps graph steps per invocation.
-- The LLM sits behind a one-method interface; the 66-test suite runs offline with a fake client and an injected clock.
+- The LLM sits behind a one-method interface; the 68-test suite runs offline with a fake client and an injected clock.
 
 ## What it demonstrates
 
@@ -28,14 +28,70 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 
 ## Architecture
 
+The agent is a LangGraph `StateGraph`. The diagram below is generated from the real compiled graph by `scripts/render_graph.py` (dotted edges are conditional routes); a test fails if it drifts.
+
+<!-- flow-diagram:start -->
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	intake(intake)
+	sample(sample)
+	evaluate(evaluate)
+	auto_execute(auto_execute)
+	auto_deny(auto_deny)
+	open_ticket(open_ticket)
+	human_review(human_review)
+	validate(validate)
+	reject(reject)
+	execute(execute)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake;
+	evaluate -.-> auto_deny;
+	evaluate -.-> auto_execute;
+	evaluate -.-> open_ticket;
+	human_review --> validate;
+	intake -.-> sample;
+	open_ticket --> human_review;
+	sample --> evaluate;
+	validate -.-> __end__;
+	validate -.-> execute;
+	validate -.-> human_review;
+	validate -.-> reject;
+	auto_deny --> __end__;
+	auto_execute --> __end__;
+	execute --> __end__;
+	reject --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
 ```
-START ─► intake ─► sample x N (parallel branches) ─► evaluate ─┬─► auto_execute / auto_deny ─► END
-                                                               └─► open_ticket ─► human_review  (interrupt: run checkpointed)
-                                                                        ▲                │ resume(Command)
-                                                                        └── invalid ◄─ validate ─┬─► execute ─► END
-                                                                                                 ├─► reject  ─► END
-                                                                                                 └─► expired ─► END
-every node writes to audit.jsonl (hash chain)
+<!-- flow-diagram:end -->
+
+Every node writes to `audit.jsonl` (hash chain). `human_review` is where the native `interrupt` pauses the run until a reviewer responds; `validate` can send an invalid response back to `human_review`.
+
+How the components below connect:
+
+```mermaid
+flowchart LR
+    CLI["cli.py<br/>hitl demo | submit | pending | respond | audit"] --> AG
+    subgraph AG["agent.py - ApprovalAgent (LangGraph StateGraph)"]
+        direction TB
+        G["nodes, conditional edges,<br/>interrupt"]
+        CP[("SQLite checkpointer")]
+        G <--> CP
+    end
+    AG -->|"assess request"| UNC["uncertainty.py<br/>prompt, parse, pause signals"]
+    UNC --> LLM["llm.py<br/>LLMClient: AnthropicClient / FakeLLMClient"]
+    AG -->|"open / resolve ticket"| ST[("store.py<br/>JSON tickets")]
+    AG -->|"check human response"| VAL["validation.py<br/>authority, separation of duties,<br/>completeness, amount"]
+    AG -->|"approved refund"| EX["executor.py<br/>idempotent ledger"]
+    AG -->|"every step"| AU[("audit.py<br/>hash-chained audit.jsonl")]
+    CLI -.->|"verify chain"| AU
 ```
 
 Components:
@@ -89,6 +145,7 @@ Configuration: `ANTHROPIC_API_KEY`, `HITL_MODEL` (default `claude-sonnet-5-5`), 
 
 ```
 src/hitl_agent/   package
+scripts/          render_graph.py regenerates the README flow diagram
 tests/            offline pytest suite (fake LLM, injected clock)
 .env.example      configuration template
 ```
