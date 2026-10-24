@@ -46,6 +46,14 @@ def test_disagreeing_parallel_samples_pause(make_agent, req):
     assert res.paused and res.signals[0].kind.value == "inconsistent_samples"
 
 
+def test_every_parallel_samples_doubt_reaches_the_human(make_agent, req):
+    agent = make_agent([reply(), reply(confidence=0.4, missing=["Returned?"]), reply(missing=["Receipt?"])],
+                       policy=Policy(samples=3))
+    res = agent.submit(req())
+    assert res.paused and {s.kind.value for s in res.signals} == {"low_confidence", "missing_info"}
+    assert sorted(res.questions) == ["Receipt?", "Returned?"]
+
+
 def test_refused_response_loops_back_to_the_interrupt(make_agent, req):
     agent = make_agent([reply(confidence=0.4, missing=["q?"])])
     res = agent.submit(req())

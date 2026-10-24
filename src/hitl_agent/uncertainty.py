@@ -67,26 +67,24 @@ def run_sample(llm: LLMClient, req: RefundRequest) -> Assessment | UncertaintySi
 def evaluate(
     req: RefundRequest, results: list[Assessment | UncertaintySignal], policy: Policy
 ) -> tuple[Assessment | None, list[UncertaintySignal]]:
-    """Combine sample results into a primary assessment plus any uncertainty signals."""
+    """Combine sample results into one conservative assessment plus any uncertainty signals.
+
+    The combined assessment takes the lowest confidence and the union of every
+    sample's missing_info, so no single confident sample can mask another's doubt.
+    """
     samples = [r for r in results if isinstance(r, Assessment)]
     failures = [r for r in results if isinstance(r, UncertaintySignal)]
-    primary = samples[0] if samples else None
-    if primary is not None and not failures:
-        return primary, detect(req, primary, policy, samples)
+    combined = (
+        samples[0].model_copy(update={
+            "confidence": min(s.confidence for s in samples),
+            "missing_info": list(dict.fromkeys(q for s in samples for q in s.missing_info)),
+        })
+        if samples else None
+    )
+    if combined is not None and not failures:
+        return combined, detect(req, combined, policy, samples)
     # Model failed: still apply the policy rules that don't depend on it.
-    return primary, failures + _policy_signals(req, policy)
-
-
-def assess(
-    llm: LLMClient, req: RefundRequest, policy: Policy
-) -> tuple[Assessment | None, list[UncertaintySignal]]:
-    """Sequential convenience wrapper (the graph runs the samples as parallel branches)."""
-    results: list[Assessment | UncertaintySignal] = []
-    for _ in range(max(1, policy.samples)):
-        results.append(run_sample(llm, req))
-        if isinstance(results[-1], UncertaintySignal):
-            break
-    return evaluate(req, results, policy)
+    return combined, failures + _policy_signals(req, policy)
 
 
 def _policy_signals(req: RefundRequest, policy: Policy) -> list[UncertaintySignal]:
