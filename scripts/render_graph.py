@@ -2,7 +2,6 @@
 
     python scripts/render_graph.py           # rewrite the diagram in README.md
     python scripts/render_graph.py --check   # exit 1 if README.md is out of date
-    python scripts/render_graph.py --print   # print the Mermaid source only
 
 Runs offline: the graph is built with a fake LLM and temporary storage, and never invoked.
 """
@@ -34,18 +33,14 @@ def compiled_mermaid() -> str:
         return agent.graph.get_graph().draw_mermaid().strip()
 
 
-def flow_block(mermaid: str | None = None) -> str:
-    return f"{START}\n```mermaid\n{mermaid or compiled_mermaid()}\n```\n{END}"
+def flow_block() -> str:
+    return f"{START}\n```mermaid\n{compiled_mermaid()}\n```\n{END}"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="fail if README.md differs from the compiled graph")
-    ap.add_argument("--print", action="store_true", help="print the Mermaid source and exit")
     args = ap.parse_args()
-    if args.print:
-        print(compiled_mermaid())
-        return 0
     text = README.read_text()
     if not BLOCK.search(text):
         print(f"{README.name}: missing {START} ... {END} markers", file=sys.stderr)
