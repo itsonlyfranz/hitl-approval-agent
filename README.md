@@ -4,15 +4,25 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 
 > Project 6 of my AI-engineering portfolio. **Shows: you can build safe, compliant systems.**
 
+**Technologies:** Python 3.11+, Pydantic v2, Anthropic Claude SDK, pytest
+
+## Highlights
+
+- Six distinct uncertainty signals (low confidence, missing info, inconsistent samples, unparseable output, LLM error, high-value policy) gate every action; the agent fails closed.
+- Pause/resume through durable, atomically written JSON tickets: no side effect happens while a request waits, and a pending ticket survives a process restart.
+- Human input is validated before resume: authorised reviewer, separation of duties, every question answered, bounded amount edits, per-reviewer approval limits.
+- SHA-256 hash-chained audit log: the offline demo writes 15 verified records across 3 requests, and tests confirm edits, deletions and reordering are detected.
+- The LLM sits behind a one-method interface; the 50-test suite runs offline with a fake client and an injected clock.
+
 ## What it demonstrates
 
 | Capability | Where | Proved by |
 |---|---|---|
-| **Uncertainty detection** — low confidence, missing facts, self-inconsistency, malformed output, provider outage, high-value policy | `uncertainty.py` | `tests/test_uncertainty.py` |
-| **Pause** — durable checkpoint, nothing executes while waiting; survives restarts and expires | `agent.py`, `store.py` | `test_uncertain_request_pauses…`, `test_pause_survives_process_restart`, `test_expired_ticket_is_not_executed` |
-| **Request human input** — ticket carries the signals and the exact questions to answer | `models.Ticket` | `test_uncertain_request_pauses…` |
-| **Resume with validated context** — authority, separation of duties, completeness, amount bounds, approval limits | `validation.py` | `test_invalid_response_refused…`, `test_reviewer_approval_limit_enforced`, `test_modify_*` |
-| **Full audit trail** — append-only, SHA-256 hash-chained; edits, deletions and reordering are detected | `audit.py` | `tests/test_audit.py` |
+| **Uncertainty detection** | `uncertainty.py` | `tests/test_uncertainty.py` |
+| **Pause** - durable checkpoint, nothing executes while waiting; survives restarts and expires | `agent.py`, `store.py` | `test_uncertain_request_pauses...`, `test_pause_survives_process_restart`, `test_expired_ticket_is_not_executed` |
+| **Request human input** - ticket carries the signals and the exact questions | `models.Ticket` | `test_uncertain_request_pauses...` |
+| **Resume with validated context** | `validation.py` | `test_invalid_response_refused...`, `test_reviewer_approval_limit_enforced`, `test_modify_*` |
+| **Full audit trail** | `audit.py` | `tests/test_audit.py` |
 
 ## Architecture
 
@@ -30,7 +40,16 @@ RefundRequest ─► LLM assess (JSON: verdict, confidence, missing_info)
          approve / modify / reject ──► Executor (idempotent ledger) ──► audit.jsonl (hash chain)
 ```
 
-Modules: `llm.py` (client interface, Anthropic + fake), `uncertainty.py`, `store.py`, `validation.py`, `agent.py` (orchestration), `audit.py`, `executor.py`, `cli.py`.
+Components:
+
+- **`llm.py`** - `LLMClient` interface with `AnthropicClient` (real) and `FakeLLMClient` (offline tests).
+- **`uncertainty.py`** - prompts the model, parses its JSON assessment, and turns results and failures into pause signals.
+- **`agent.py`** - `ApprovalAgent` orchestrating submit (decide or pause) and resume (validate, execute).
+- **`store.py`** - local-file ticket checkpoints written atomically.
+- **`validation.py`** - authority, separation-of-duties, completeness and amount checks on human responses.
+- **`executor.py`** - idempotent ledger standing in for the side-effecting payments call.
+- **`audit.py`** - append-only hash-chained JSONL log with verification.
+- **`cli.py`** - `hitl demo | submit | pending | respond | audit`.
 
 ## Quickstart
 
