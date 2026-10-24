@@ -14,7 +14,7 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 - Human input is validated before resume: authorised reviewer, separation of duties, every question answered, bounded amount edits, per-reviewer approval limits.
 - SHA-256 hash-chained audit log: the offline demo writes 15 verified records across 3 requests, and tests confirm edits, deletions and reordering are detected.
 - Self-consistency sampling runs as parallel graph branches (`Send` fan-out); a recursion limit caps graph steps per invocation.
-- The LLM sits behind a one-method interface; the 57-test suite runs offline with a fake client and an injected clock.
+- The LLM sits behind a one-method interface; the 66-test suite runs offline with a fake client and an injected clock.
 
 ## What it demonstrates
 
@@ -77,7 +77,7 @@ Configuration: `ANTHROPIC_API_KEY`, `HITL_MODEL` (default `claude-sonnet-5-5`), 
 - **Fail closed.** Unparseable model output or an API error is itself an uncertainty signal that pauses the run; the agent never guesses. Cost: outages create human work.
 - **Policy beats confidence.** Amounts at or above the limit always go to a human; the model's confidence cannot waive that.
 - **Self-reported confidence is a weak signal**, so it is combined with missing-info questions, optional multi-sample consistency (`Policy.samples`), and deterministic rules. LLM confidence is not calibrated; the deterministic rules are the real guarantee.
-- **Rejected responses don't consume the ticket.** A bad answer is audited and the reviewer can retry; only an accepted answer resolves it. A ticket resolves exactly once, so double-submission cannot pay twice (the executor is also idempotent per request).
+- **Rejected responses don't consume the ticket.** A bad answer is audited and the reviewer can retry; only an accepted answer resolves it. A ticket resolves exactly once, so double-submission cannot pay twice. The executor is also idempotent per `request_id`: a repeat request reports `already_executed` (in the result, ticket and audit log) instead of paying again.
 - **LangGraph where it fits, not everywhere.** Interrupts + a durable checkpointer give pause/resume for free; `Send` gives parallel sampling; conditional edges make routing explicit and testable. Graph state holds plain dicts (not Pydantic objects) so checkpoints stay portable across versions, and the `human_review` node is side-effect free because LangGraph re-runs an interrupted node on resume.
 - **Two stores.** The graph checkpoint owns run state; the ticket file is the reviewer-facing index (pending list, expiry, final outcome). Cheaper than scanning checkpoints, at the cost of keeping them in step.
 - **Resume does not re-ask the model.** The human's validated decision is authoritative and deterministic; answers are merged into the request context handed to the executor and recorded in the audit log.
