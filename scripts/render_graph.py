@@ -22,15 +22,19 @@ START, END = "<!-- flow-diagram:start -->", "<!-- flow-diagram:end -->"
 BLOCK = re.compile(re.escape(START) + r".*?" + re.escape(END), re.DOTALL)
 
 
-def compiled_mermaid() -> str:
-    """Mermaid source of the compiled graph, as `ApprovalAgent` builds it."""
+def compiled_graph():
+    """Drawable view of the compiled graph, as `ApprovalAgent` builds it."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         agent = ApprovalAgent(
             llm=FakeLLMClient([]), store=TicketStore(root / "tickets"), audit=AuditLog(root / "audit.jsonl"),
             executor=LedgerExecutor(root / "ledger.json"), reviewers=[],
         )
-        return agent.graph.get_graph().draw_mermaid().strip()
+        return agent.graph.get_graph()
+
+
+def compiled_mermaid() -> str:
+    return compiled_graph().draw_mermaid().strip()
 
 
 def flow_block() -> str:

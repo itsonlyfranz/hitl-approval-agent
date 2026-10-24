@@ -14,7 +14,7 @@ An LLM agent that decides on refund requests **only when it is sure**. When it i
 - Human input is validated before resume: authorised reviewer, separation of duties, every question answered, bounded amount edits, per-reviewer approval limits.
 - SHA-256 hash-chained audit log: the offline demo writes 15 verified records across 3 requests, and tests confirm edits, deletions and reordering are detected.
 - Self-consistency sampling runs as parallel graph branches (`Send` fan-out); a recursion limit caps graph steps per invocation.
-- The LLM sits behind a one-method interface; the 68-test suite runs offline with a fake client and an injected clock.
+- The LLM sits behind a one-method interface; the 67-test suite runs offline with a fake client and an injected clock.
 
 ## What it demonstrates
 
@@ -72,7 +72,7 @@ graph TD;
 ```
 <!-- flow-diagram:end -->
 
-Every node writes to `audit.jsonl` (hash chain). `human_review` is where the native `interrupt` pauses the run until a reviewer responds; `validate` can send an invalid response back to `human_review`.
+Every node writes to `audit.jsonl` (hash chain). `human_review` is where the native `interrupt` pauses the run until a reviewer responds; `validate` can send an invalid response back to `human_review`, or end the run if the ticket has expired.
 
 How the components below connect:
 
